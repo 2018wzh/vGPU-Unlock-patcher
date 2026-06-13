@@ -462,8 +462,10 @@ if $DO_MRGD; then
     rm -rf ${SOURCE}
     mkdir ${SOURCE}
     $CP ${VGPU}/. ${SOURCE}
+    chmod -R u+w ${SOURCE}
     rm ${SOURCE}/libnvidia-ml.so.${VER_VGPU}
     $CP ${GRID}/. ${SOURCE}
+    chmod -R u+w ${SOURCE}
     if [ ${VER_BLOB} = ${VER_TARGET} ]; then
         rm -rf ${SOURCE}/firmware
         $CP -f ${VGPU}/firmware ${SOURCE}
@@ -620,6 +622,7 @@ $TDMABUFEXPORT && {
 }
 $DO_VGPU && applypatchx ${TARGET} vgpu-kvm-support-v6.18-namespaced-variables.patch
 $DO_VGPU && applypatchx ${TARGET} vgpu-kvm-support-v6.19-pfn_address_space.patch
+$DO_VGPU && applypatchx ${TARGET} vgpu-kvm-support-v7.0-vma-lock.patch
 $DO_VGPU && applypatchx ${TARGET} vgpu-kvm-fault-path-acquires-mmap_lock.patch
 $DO_VGPU && applypatchx ${TARGET} vgpu-kvm-optional-vgpu-v2.patch
 

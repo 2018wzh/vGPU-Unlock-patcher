@@ -1,0 +1,94 @@
+diff --git a/kernel/nvidia/nv-mmap.c b/kernel/nvidia/nv-mmap.c
+index d387d51..35addb7 100644
+--- a/kernel/nvidia/nv-mmap.c
++++ b/kernel/nvidia/nv-mmap.c
+@@ -865,18 +865,30 @@ void NV_API_CALL nv_set_safe_to_mmap_locked(
+ #if !NV_CAN_CALL_VMA_START_WRITE
+ static NvBool nv_vma_enter_locked(struct vm_area_struct *vma, NvBool detaching)
+ {
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 0, 0)
++    NvU32 tgt_refcnt = VM_REFCNT_EXCLUDE_READERS_FLAG;
++#else
+     NvU32 tgt_refcnt = VMA_LOCK_OFFSET;
++#endif
+     NvBool interrupted = NV_FALSE;
+     if (!detaching)
+     {
+         tgt_refcnt++;
+     }
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 0, 0)
++    if (!refcount_add_not_zero(VM_REFCNT_EXCLUDE_READERS_FLAG, &vma->vm_refcnt))
++#else
+     if (!refcount_add_not_zero(VMA_LOCK_OFFSET, &vma->vm_refcnt))
++#endif
+     {
+         return NV_FALSE;
+     }
+ 
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 0, 0)
++    __vma_lockdep_acquire_exclusive(vma);
++#else
+     rwsem_acquire(&vma->vmlock_dep_map, 0, 0, _RET_IP_);
++#endif
+     prepare_to_rcuwait(&vma->vm_mm->vma_writer_wait);
+ 
+     for (;;)
+@@ -901,12 +913,23 @@ static NvBool nv_vma_enter_locked(struct vm_area_struct *vma, NvBool detaching)
+     if (interrupted)
+     {
+         // Clean up on error: release refcount and dep_map
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 0, 0)
++        NvBool detached;
++        detached = refcount_sub_and_test(VM_REFCNT_EXCLUDE_READERS_FLAG, &vma->vm_refcnt);
++        __vma_lockdep_release_exclusive(vma);
++        WARN_ON_ONCE(detached);
++#else
+         refcount_sub_and_test(VMA_LOCK_OFFSET, &vma->vm_refcnt);
+         rwsem_release(&vma->vmlock_dep_map, _RET_IP_);
++#endif
+         return NV_FALSE;
+     }
+ 
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 0, 0)
++    __vma_lockdep_stat_mark_acquired(vma);
++#else
+     lock_acquired(&vma->vmlock_dep_map, _RET_IP_);
++#endif
+     return NV_TRUE;
+ }
+ 
+@@ -915,19 +938,33 @@ static NvBool nv_vma_enter_locked(struct vm_area_struct *vma, NvBool detaching)
+  */
+ void nv_vma_start_write(struct vm_area_struct *vma)
+ {
+-    NvU32 mm_lock_seq;
+     NvBool locked;
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 0, 0)
++    if (__is_vma_write_locked(vma))
++        return;
++#else
++    NvU32 mm_lock_seq;
+     if (__is_vma_write_locked(vma, &mm_lock_seq))
+         return;
++#endif
+ 
+     locked = nv_vma_enter_locked(vma, NV_FALSE);
+ 
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 0, 0)
++    WRITE_ONCE(vma->vm_lock_seq, vma->vm_mm->mm_lock_seq.sequence);
++#else
+     WRITE_ONCE(vma->vm_lock_seq, mm_lock_seq);
++#endif
+     if (locked)
+     {
+         NvBool detached;
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 0, 0)
++        detached = refcount_sub_and_test(VM_REFCNT_EXCLUDE_READERS_FLAG, &vma->vm_refcnt);
++        __vma_lockdep_release_exclusive(vma);
++#else
+         detached = refcount_sub_and_test(VMA_LOCK_OFFSET, &vma->vm_refcnt);
+         rwsem_release(&vma->vmlock_dep_map, _RET_IP_);
++#endif
+         WARN_ON_ONCE(detached);
+     }
+ }
